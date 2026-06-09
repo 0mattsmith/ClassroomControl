@@ -287,8 +287,12 @@ class ClientSession:
         await write_frame(self.writer, Op.ACK, {"for": Op.MESSAGE})
 
     async def _h_demo_start(self, data, payload):
-        self.overlay.requestDemoStart.emit()
-        await write_frame(self.writer, Op.ACK, {"for": Op.DEMO_START})
+        windowed = bool(data.get("windowed", False))
+        self.overlay.requestDemoStart.emit(windowed)
+        await write_frame(
+            self.writer, Op.ACK,
+            {"for": Op.DEMO_START, "windowed": windowed},
+        )
 
     async def _h_demo_frame(self, data, payload):
         if payload:

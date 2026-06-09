@@ -48,6 +48,15 @@ class MainWindow(QMainWindow):
         self.remote_windows: dict[str, RemoteControlWindow] = {}
         self._thumb_width: int = Thumbnail.DEFAULT_WIDTH
 
+        # View filters — visibility on the grid. Per-machine flag lives
+        # on Computer.visible; these two filter all machines at once.
+        self._hide_offline: bool = False        # disconnected → hidden
+        self._hide_no_session: bool = False     # connected but no user → hidden
+
+        # Last-known info reported by each client (mainly "user" for
+        # the no-session filter). Keyed by computer_id.
+        self._client_info: dict[str, dict] = {}
+
         # Per-request post-action: when a FILE_PULL_REQUEST is sent, we
         # remember the teacher's "after it arrives" choice keyed by
         # computer_id; _on_file pops it on receipt.
@@ -199,6 +208,15 @@ class MainWindow(QMainWindow):
 
         class_menu.addSeparator()
 
+        act_demo_windowed = QAction("Start demo (windowed on students)", self)
+        act_demo_windowed.triggered.connect(self._start_demo_windowed)
+        class_menu.addAction(act_demo_windowed)
+        act_demo_stop = QAction("Stop demo", self)
+        act_demo_stop.triggered.connect(self._stop_demo_via_menu)
+        class_menu.addAction(act_demo_stop)
+
+        class_menu.addSeparator()
+
         act_msg = QAction("Send Message…", self)
         act_msg.setShortcut("Ctrl+M")
         act_msg.triggered.connect(self._send_message)
@@ -228,6 +246,29 @@ class MainWindow(QMainWindow):
         act_running.setShortcut("Ctrl+Shift+R")
         act_running.triggered.connect(self._show_running_apps_for_selection)
         class_menu.addAction(act_running)
+
+        # ----- View (visibility filters) -------------------------------
+        view_menu = mb.addMenu("&View")
+
+        self.act_hide_offline = QAction("Hide offline machines", self)
+        self.act_hide_offline.setCheckable(True)
+        self.act_hide_offline.setChecked(self._hide_offline)
+        self.act_hide_offline.toggled.connect(self._on_hide_offline_toggled)
+        view_menu.addAction(self.act_hide_offline)
+
+        self.act_hide_no_session = QAction(
+            "Hide machines without a logged-in user", self,
+        )
+        self.act_hide_no_session.setCheckable(True)
+        self.act_hide_no_session.setChecked(self._hide_no_session)
+        self.act_hide_no_session.toggled.connect(self._on_hide_no_session_toggled)
+        view_menu.addAction(self.act_hide_no_session)
+
+        view_menu.addSeparator()
+
+        act_show_all = QAction("Show all hidden computers", self)
+        act_show_all.triggered.connect(self._show_all_computers)
+        view_menu.addAction(act_show_all)
 
         # ----- Help -----------------------------------------------------
         help_menu = mb.addMenu("&Help")
@@ -455,6 +496,17 @@ class MainWindow(QMainWindow):
         self.demo_action.setToolTip("Broadcast your screen to every connected student")
         self.demo_action.toggled.connect(self._toggle_demo)
         tb.addAction(self.demo_action)
+
+        # Demo Pause / Resume — only sensible while the broadcast is on,
+        # so it's disabled until the user starts the demo.
+        self.demo_pause_action = QAction(icons.pause(), "Pause demo", self)
+        self.demo_pause_action.setCheckable(True)
+        self.demo_pause_action.setEnabled(False)
+        self.demo_pause_action.setToolTip(
+            "Pause the broadcast — students keep seeing the last frame"
+        )
+        self.demo_pause_action.toggled.connect(self._toggle_demo_pause)
+        tb.addAction(self.demo_pause_action)
         tb.addSeparator()
 
         add(icons.launch(), "Open…", self._launch,
@@ -480,11 +532,24 @@ class MainWindow(QMainWindow):
 
         # --- Power menu (button with dropdown) --------------------------
         power_menu = QMenu("Power", self)
-        # Wake-on-LAN uses the MAC field on each Computer; works without
-        # any client process running on the target.
-        wake_act = QAction("Wake (WoL)", self)
-        wake_act.triggered.connect(self._wake_targets)
-        power_menu.addAction(wake_act)
+        # Lock + Unlock at the top — they're the most common quick-actions
+        # during a class.
+        lock_p = QAction("Lock screens", self)
+        lock_p.triggered.connect(
+            lambda: self._send_targets(Op.LOCK,
+                                      {"message": "Screen locked by teacher",
+                                       "strict": True})
+        )
+        power_menu.addAction(lock_p)
+        unlock_p = QAction("Unlock screens", self)
+        unlock_p.triggered.connect(lambda: self._send_targets(Op.UNLOCK))
+        power_menu.addAction(unlock_p)
+        power_menu.addSeparator()
+        # Wake (kept in the menu for discoverability as well as the
+        # standalone toolbar button below).
+        wake_act_m = QAction("Wake (WoL)", self)
+        wake_act_m.triggered.connect(self._wake_targets)
+        power_menu.addAction(wake_act_m)
         power_menu.addSeparator()
         for label, action in [
             ("Shutdown", "shutdown"),
@@ -502,6 +567,12 @@ class MainWindow(QMainWindow):
         power_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         power_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         tb.addWidget(power_btn)
+
+        # Standalone WoL toolbar action — common enough to deserve its
+        # own button (you still get it in the Power dropdown too).
+        add(icons.wake_on_lan(), "Wake", self._wake_targets,
+            "Send a Wake-on-LAN magic packet to the selected machines")
+
         tb.addSeparator()
 
         # --- Selection helpers ------------------------------------------
@@ -540,7 +611,82 @@ class MainWindow(QMainWindow):
         thumb.selected.connect(self._on_thumb_selected)
         thumb.contextMenuRequested.connect(self._on_thumb_context_menu)
         self.thumbnails[c.id] = thumb
+        # Honour any active filters / per-computer visibility right away,
+        # so newly-added tiles don't flash on screen then disappear.
+        thumb.setVisible(self._effective_visible(c.id))
         self._relayout()
+
+    # ------------------------------------------------------------------
+    # Visibility / filtering
+    # ------------------------------------------------------------------
+
+    def _on_hide_offline_toggled(self, on: bool) -> None:
+        self._hide_offline = on
+        self._apply_visibility()
+
+    def _on_hide_no_session_toggled(self, on: bool) -> None:
+        self._hide_no_session = on
+        self._apply_visibility()
+
+    def _show_all_computers(self) -> None:
+        """Un-hide every computer in the roster + clear the two filter
+        toggles. The 'Get me back to a normal view' button."""
+        changed = False
+        for c in self.roster.computers:
+            if not c.visible:
+                c.visible = True
+                changed = True
+        if changed:
+            self.roster.save()
+        self.act_hide_offline.setChecked(False)
+        self.act_hide_no_session.setChecked(False)
+        # _on_*_toggled already calls _apply_visibility; if neither was
+        # checked we still need a refresh:
+        self._apply_visibility()
+
+    def _effective_visible(self, cid: str) -> bool:
+        """Whether this computer's tile should be visible right now,
+        combining the per-machine ``Computer.visible`` flag with the
+        two View-menu filters."""
+        c = self.roster.get(cid)
+        if c is None or not c.visible:
+            return False
+        st = self.hub.get_state(cid)
+        connected = bool(st and st.state == "connected")
+        if self._hide_offline and not connected:
+            return False
+        if self._hide_no_session:
+            info = self._client_info.get(cid) or (st.info if st else {})
+            if not (info or {}).get("user"):
+                return False
+        return True
+
+    def _apply_visibility(self) -> None:
+        """Show/hide each tile and re-flow the grid."""
+        for cid, thumb in self.thumbnails.items():
+            thumb.setVisible(self._effective_visible(cid))
+        self._relayout()
+
+    def _hide_one(self, cid: str) -> None:
+        c = self.roster.get(cid)
+        if c is None or not c.visible:
+            return
+        c.visible = False
+        self.roster.save()
+        self._apply_visibility()
+        self._log_activity(f"hid {c.name}")
+
+    def _unhide_one(self, cid: str) -> None:
+        c = self.roster.get(cid)
+        if c is None or c.visible:
+            return
+        c.visible = True
+        self.roster.save()
+        self._apply_visibility()
+
+    # ------------------------------------------------------------------
+    # Thumbnail right-click menu
+    # ------------------------------------------------------------------
 
     def _on_thumb_context_menu(self, cid: str, global_pos) -> None:
         """Per-tile right-click menu — quick access to the most common
@@ -568,6 +714,9 @@ class MainWindow(QMainWindow):
                        lambda: (self.hub.disconnect(cid),
                                 QTimer.singleShot(
                                     300, lambda: self.hub.connect(cid))))
+        menu.addSeparator()
+        menu.addAction(icons.visibility_off(), "Hide this computer",
+                       lambda: self._hide_one(cid))
         menu.exec(global_pos)
 
     def _remove_thumbnail(self, computer_id: str) -> None:
@@ -666,6 +815,10 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_state_changed(self, cid: str, state: str, info: dict) -> None:
+        # Cache the latest info dict — used by the View → Hide no-session
+        # filter, which needs to know whether anyone's logged in.
+        if info:
+            self._client_info[cid] = info
         thumb = self.thumbnails.get(cid)
         if not thumb:
             return
@@ -673,6 +826,9 @@ class MainWindow(QMainWindow):
         c = self.roster.get(cid)
         if c and info.get("hostname"):
             thumb.set_label(f"{c.name} – {info.get('user', '?')}")
+        # Re-evaluate filters: a tile may now hide / unhide as a result
+        # of going from connected → disconnected etc.
+        self._apply_visibility()
         if state == "connected":
             # Subscribe to a low-rate stream for thumbnails (honouring prefs).
             self.hub.send(cid, Op.START_STREAM, {
@@ -910,15 +1066,48 @@ class MainWindow(QMainWindow):
 
     def _toggle_demo(self, on: bool) -> None:
         if on:
-            self.demo.start()
+            self.demo.start(windowed=False)
             self.demo_action.setIcon(icons.demo_stop())
             self.demo_action.setText("Stop demo")
+            self.demo_pause_action.setEnabled(True)
             self._log_activity("demo mode started")
         else:
             self.demo.stop()
             self.demo_action.setIcon(icons.demo_start())
             self.demo_action.setText("Start demo")
+            self.demo_pause_action.setEnabled(False)
+            # Reset pause toggle visually without re-firing the slot.
+            self.demo_pause_action.blockSignals(True)
+            self.demo_pause_action.setChecked(False)
+            self.demo_pause_action.setText("Pause demo")
+            self.demo_pause_action.blockSignals(False)
             self._log_activity("demo mode stopped")
+
+    def _start_demo_windowed(self) -> None:
+        """Class menu → Start demo (windowed). Students see the demo in
+        a normal resizable window instead of a fullscreen overlay."""
+        self.demo.start(windowed=True)
+        self.demo_action.blockSignals(True)
+        self.demo_action.setChecked(True)
+        self.demo_action.setIcon(icons.demo_stop())
+        self.demo_action.setText("Stop demo (windowed)")
+        self.demo_action.blockSignals(False)
+        self.demo_pause_action.setEnabled(True)
+        self._log_activity("demo mode started (windowed)")
+
+    def _stop_demo_via_menu(self) -> None:
+        if self.demo.is_active():
+            self.demo_action.setChecked(False)   # fires _toggle_demo(False)
+
+    def _toggle_demo_pause(self, paused: bool) -> None:
+        if paused:
+            self.demo.pause()
+            self.demo_pause_action.setText("Resume demo")
+            self._log_activity("demo paused (last frame frozen on students)")
+        else:
+            self.demo.resume()
+            self.demo_pause_action.setText("Pause demo")
+            self._log_activity("demo resumed")
 
     def _on_thumb_size_changed(self, value: int) -> None:
         """Slider callback: resize every thumbnail and re-layout the grid."""

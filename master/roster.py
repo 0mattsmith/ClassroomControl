@@ -19,6 +19,7 @@ class Computer:
     group: str = "default"
     mac: str = ""         # optional, used for wake-on-LAN
     notes: str = ""
+    visible: bool = True  # tile shown in the grid? toggle from the right-click menu
 
 
 @dataclass
@@ -32,7 +33,14 @@ class Roster:
             return cls(computers=[])
         try:
             data = json.loads(path.read_text())
-            return cls(computers=[Computer(**c) for c in data.get("computers", [])])
+            # Filter to known dataclass fields so older rosters (without
+            # newer keys like ``visible``) load cleanly, and newer
+            # rosters (with extra debug fields) don't blow up.
+            allowed = {f.name for f in Computer.__dataclass_fields__.values()}
+            return cls(computers=[
+                Computer(**{k: v for k, v in c.items() if k in allowed})
+                for c in data.get("computers", [])
+            ])
         except Exception:
             return cls(computers=[])
 

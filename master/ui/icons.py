@@ -277,6 +277,59 @@ def zoom_out() -> QIcon:
     return _icon(d)
 
 
+def wake_on_lan() -> QIcon:
+    """Power-plug-with-lightning glyph for the dedicated WoL toolbar action."""
+    def d(p: QPainter) -> None:
+        # Outline of a stylised power button
+        p.drawArc(7, 9, 18, 18, 60 * 16, 240 * 16)
+        # Lightning bolt across the centre — signals "wake remotely"
+        bolt = [
+            QPointF(16, 7), QPointF(13, 16),
+            QPointF(17, 16), QPointF(15, 25),
+            QPointF(20, 14), QPointF(16, 14),
+        ]
+        p.setBrush(QBrush(QColor(255, 215, 60)))
+        p.drawPolygon(QPolygonF(bolt))
+    return _icon(d)
+
+
+def visibility_on() -> QIcon:
+    """Open eye — 'computer is shown in the grid'."""
+    def d(p: QPainter) -> None:
+        # Almond / lens shape
+        path = [
+            QPointF(5, 16), QPointF(16, 8), QPointF(27, 16),
+            QPointF(16, 24),
+        ]
+        p.drawPolygon(QPolygonF(path))
+        # Pupil
+        p.setBrush(QBrush(_stroke_color()))
+        p.drawEllipse(13, 13, 6, 6)
+    return _icon(d)
+
+
+def visibility_off() -> QIcon:
+    """Crossed-out eye — 'computer is hidden from the grid'."""
+    def d(p: QPainter) -> None:
+        path = [
+            QPointF(5, 16), QPointF(16, 8), QPointF(27, 16),
+            QPointF(16, 24),
+        ]
+        p.drawPolygon(QPolygonF(path))
+        # Strike-through
+        p.drawLine(6, 6, 26, 26)
+    return _icon(d)
+
+
+def pause() -> QIcon:
+    """Two vertical bars — the universal pause glyph."""
+    def d(p: QPainter) -> None:
+        p.setBrush(QBrush(_stroke_color()))
+        p.drawRect(11, 8, 4, 16)
+        p.drawRect(17, 8, 4, 16)
+    return _icon(d)
+
+
 def zoom_in() -> QIcon:
     """Plus-in-magnifying-glass for the size-slider's right label."""
     def d(p: QPainter) -> None:

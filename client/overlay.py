@@ -218,39 +218,99 @@ class _DemoWindow(QWidget):
         ev.accept()
 
 
+class _DemoWindowedDialog(QWidget):
+    """Resizable, non-fullscreen demo viewer — used when the master
+    starts the demo with ``windowed=True``. Has a normal title bar so
+    the student can move + resize it and keep doing their own work."""
+
+    def __init__(self):
+        super().__init__(
+            None,
+            Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint,
+        )
+        self.setWindowTitle("Demo from teacher")
+        self.resize(960, 600)
+        pal = QPalette()
+        pal.setColor(QPalette.ColorRole.Window, QColor(0, 0, 0))
+        self.setPalette(pal)
+        self.setAutoFillBackground(True)
+        self._label = QLabel(self)
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._label)
+
+    def show_frame(self, jpeg_bytes: bytes) -> None:
+        img = QImage.fromData(jpeg_bytes)
+        if img.isNull():
+            return
+        pix = QPixmap.fromImage(img).scaled(
+            self.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._label.setPixmap(pix)
+
+
 class DemoOverlay:
-    """Composite demo broadcaster — one window per screen so the
-    teacher's broadcast covers every monitor on the student's machine."""
+    """Composite demo viewer.
+
+    Two modes:
+      * **Fullscreen** (default): one frameless window per attached
+        screen, blacking out every monitor while the demo runs.
+      * **Windowed**: a single resizable :class:`_DemoWindowedDialog`
+        with a normal title bar that the student can move out of the
+        way. Stays on top so they can keep glancing at it.
+    """
 
     def __init__(self):
         self._windows: list[_DemoWindow] = []
+        self._windowed_dialog: _DemoWindowedDialog | None = None
+        self._mode: str = "fullscreen"
 
-    def show(self) -> None:
+    def show(self, windowed: bool = False) -> None:
         self.hide()
-        app = QApplication.instance()
-        for screen in app.screens():
-            win = _DemoWindow()
-            win.setGeometry(screen.geometry())
-            self._windows.append(win)
-        for w in self._windows:
-            w.showFullScreen()
-            w.raise_()
+        self._mode = "windowed" if windowed else "fullscreen"
+        if windowed:
+            self._windowed_dialog = _DemoWindowedDialog()
+            self._windowed_dialog.show()
+            self._windowed_dialog.raise_()
+            self._windowed_dialog.activateWindow()
+        else:
+            app = QApplication.instance()
+            for screen in app.screens():
+                win = _DemoWindow()
+                win.setGeometry(screen.geometry())
+                self._windows.append(win)
+            for w in self._windows:
+                w.showFullScreen()
+                w.raise_()
 
     def hide(self) -> None:
         for w in self._windows:
             try:
-                w.hide()
-                w.deleteLater()
+                w.hide(); w.deleteLater()
             except Exception:
                 pass
         self._windows.clear()
+        if self._windowed_dialog is not None:
+            try:
+                self._windowed_dialog.hide()
+                self._windowed_dialog.deleteLater()
+            except Exception:
+                pass
+            self._windowed_dialog = None
 
     def show_frame(self, jpeg_bytes: bytes) -> None:
         for w in self._windows:
             w.show_frame(jpeg_bytes)
+        if self._windowed_dialog is not None:
+            self._windowed_dialog.show_frame(jpeg_bytes)
 
     def isVisible(self) -> bool:  # noqa: N802
-        return any(w.isVisible() for w in self._windows)
+        if any(w.isVisible() for w in self._windows):
+            return True
+        return self._windowed_dialog is not None and self._windowed_dialog.isVisible()
 
 
 class TeacherMessageDialog(QDialog):
@@ -364,7 +424,9 @@ class OverlayController(QObject):
     requestLock = pyqtSignal(str, bool)
     requestUnlock = pyqtSignal()
     requestMessage = pyqtSignal(str, str)  # title, body
-    requestDemoStart = pyqtSignal()
+    # bool = windowed (True → student gets a normal resizable dialog
+    # instead of the fullscreen multi-screen overlay)
+    requestDemoStart = pyqtSignal(bool)
     requestDemoFrame = pyqtSignal(bytes)
     requestDemoStop = pyqtSignal()
 
@@ -427,11 +489,11 @@ class OverlayController(QObject):
         dlg.raise_()
         dlg.activateWindow()
 
-    @pyqtSlot()
-    def _on_demo_start(self):
+    @pyqtSlot(bool)
+    def _on_demo_start(self, windowed: bool):
         if self._demo is None:
             self._demo = DemoOverlay()
-        self._demo.show()       # composite multi-screen show
+        self._demo.show(windowed=windowed)
 
     @pyqtSlot(bytes)
     def _on_demo_frame(self, jpeg: bytes):
