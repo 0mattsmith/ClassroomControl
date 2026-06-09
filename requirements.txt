@@ -1,0 +1,18 @@
+PyQt6>=6.6
+Pillow>=10.0
+cryptography>=42.0
+
+# ----- macOS-only (no-ops on other platforms via try/except in the code)
+pyobjc-core>=10.0; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
+
+# ----- Windows-only
+mss>=9.0;       sys_platform == "win32"
+psutil>=5.9;    sys_platform == "win32"
+pycaw>=20240210; sys_platform == "win32"
+comtypes>=1.2;  sys_platform == "win32"
+
+# ----- Packaging (build-time only)
+py2app>=0.28;       sys_platform == "darwin"
+pyinstaller>=6.0;   sys_platform == "win32"

@@ -1,0 +1,22 @@
+# /etc/sudoers.d/classcontrol
+#
+# Allow the user running the ClassControl client to issue the specific
+# privileged commands needed for internet lockdown, URL blocking, and
+# remote power management WITHOUT being prompted for a password.
+#
+# Replace `_classcontrol` with the local user account that runs the
+# client daemon. Install with:
+#
+#     sudo visudo -f /etc/sudoers.d/classcontrol
+#     # paste the contents of this file, save, exit
+#     sudo chmod 440 /etc/sudoers.d/classcontrol
+#
+# This file is intentionally narrow: only the exact binaries we need
+# are whitelisted.
+
+Cmnd_Alias CLASSCONTROL_PF = /sbin/pfctl, /usr/sbin/pfctl
+Cmnd_Alias CLASSCONTROL_HOSTS = /usr/bin/tee /etc/hosts, /usr/sbin/dscacheutil, /usr/bin/killall
+Cmnd_Alias CLASSCONTROL_POWER = /sbin/shutdown
+Cmnd_Alias CLASSCONTROL_MV    = /bin/mv
+
+_classcontrol ALL=(root) NOPASSWD: CLASSCONTROL_PF, CLASSCONTROL_HOSTS, CLASSCONTROL_POWER, CLASSCONTROL_MV

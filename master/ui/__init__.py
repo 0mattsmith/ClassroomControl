@@ -1,0 +1,1 @@
+"""ClassControl master Qt UI."""

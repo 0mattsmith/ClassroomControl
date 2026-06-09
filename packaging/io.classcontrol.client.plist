@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchDaemon manifest for the ClassControl student client.
+
+  Install with (run on each student Mac):
+      sudo cp packaging/io.classcontrol.client.plist /Library/LaunchDaemons/
+      sudo chown root:wheel /Library/LaunchDaemons/io.classcontrol.client.plist
+      sudo chmod 644 /Library/LaunchDaemons/io.classcontrol.client.plist
+      sudo launchctl load -w /Library/LaunchDaemons/io.classcontrol.client.plist
+
+  Edit the ProgramArguments path if you installed the .app somewhere
+  other than /Applications.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.classcontrol.client</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/ClassControl Client.app/Contents/MacOS/ClassControl Client</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/classcontrol-client.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/classcontrol-client.log</string>
+</dict>
+</plist>

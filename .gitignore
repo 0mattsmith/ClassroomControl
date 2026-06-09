@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build artefacts — these are produced fresh by the build scripts.
+build/
+dist/
+dist-*/
+release/
+*.app/
+*.spec.bak
+
+# Sensitive — runtime config / keys / certs.
+# Auth keys, TLS certs, etc. live under ~/Library or %APPDATA% so they're
+# not in the repo anyway, but defend in depth in case anyone copies a
+# dev folder into the project root by accident.
+auth.key
+cert.pem
+key.pem
+*.pem
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Cowork session files — only Claude needs these
+.claude/
+
+# Old / archived builds — these can balloon to hundreds of MB and
+# git is not the right place for them. Keep them locally if you want,
+# just don't ship them through GitHub.
+*.zip
+OLDVERSIONS/
+ClassroomManagement.zip

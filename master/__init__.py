@@ -1,0 +1,1 @@
+"""ClassControl teacher-side application."""
