@@ -25,6 +25,16 @@ on:
   push:
     tags:
       - 'v*'
+  # Lets you fire the workflow manually from the Actions tab — handy
+  # for re-running a release if you fix a build bug, without having
+  # to delete the old tag and re-create it. Pick the tag you want to
+  # build against from the "Use workflow from" branch/tag picker.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re-)build and upload to'
+        required: true
+        default: 'v0.2.1'
 
 permissions:
   contents: write  # for softprops/action-gh-release to create/update releases
@@ -39,6 +49,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On workflow_dispatch we want to check out the specific tag
+          # the user typed, not the branch they ran the workflow from.
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -53,7 +67,10 @@ jobs:
 
       - name: Extract version from tag
         id: ver
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          echo "TAG=$TAG"             >> $GITHUB_OUTPUT
+          echo "VERSION=${TAG#v}"     >> $GITHUB_OUTPUT
 
       - name: Build teacher .app
         run: |
@@ -83,7 +100,7 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.ver.outputs.TAG }}
           files: |
             release-mac/*.zip
             release-mac/SHA256SUMS-mac.txt
@@ -102,6 +119,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On workflow_dispatch we want to check out the specific tag
+          # the user typed, not the branch they ran the workflow from.
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -148,7 +169,7 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.ver.outputs.TAG }}
           files: |
             release-win/*.zip
             release-win/SHA256SUMS-win.txt
