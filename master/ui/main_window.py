@@ -75,8 +75,15 @@ class MainWindow(QMainWindow):
         self._lockdown_failure_shown: bool = False
         self._url_block_failure_shown: bool = False
 
+        # Sticky audio silence — real value loaded just below once
+        # ``self._settings`` exists. Holds the master switch only;
+        # each (re)connect pushes lock/unlock to honour it.
+        self._audio_silenced: bool = False
+
         # Persistent preferences (thumbnail FPS/quality, demo FPS, etc.)
         self._settings = self._load_settings()
+        # Pull the persisted Silence state now that _settings exists.
+        self._audio_silenced = bool(self._settings.get("audio_silenced", False))
 
         self.demo = DemoBroadcaster(
             hub,
@@ -135,6 +142,11 @@ class MainWindow(QMainWindow):
         self._stream_tick.setInterval(8000)
         self._stream_tick.timeout.connect(self._ensure_thumb_streams)
         self._stream_tick.start()
+
+        # Auto-check for updates in the background ~3 s after launch.
+        # Silent unless an update is available; controlled by the
+        # "Check for updates on startup" Preference.
+        QTimer.singleShot(3000, self._maybe_check_updates_at_startup)
 
     # ------------------------------------------------------------------
     # Toolbar
@@ -273,6 +285,11 @@ class MainWindow(QMainWindow):
         # ----- Help -----------------------------------------------------
         help_menu = mb.addMenu("&Help")
         act_update = QAction("Check for Updates…", self)
+        # ApplicationSpecificRole tells macOS to fold this into the
+        # bold App menu ("ClassControl Teacher") next to About /
+        # Preferences / Quit — that's where Mac users look for it.
+        # On other platforms it stays under Help.
+        act_update.setMenuRole(QAction.MenuRole.ApplicationSpecificRole)
         act_update.triggered.connect(self._show_update_dialog)
         help_menu.addAction(act_update)
         help_menu.addSeparator()
@@ -347,7 +364,7 @@ class MainWindow(QMainWindow):
         )
 
     def _show_update_dialog(self) -> None:
-        """Help → Check for Updates… handler.
+        """Help → Check for Updates… (also Mac App-menu entry).
 
         Opens the modal :class:`UpdateDialog` which checks the manifest
         in the background and, on the user's say-so, downloads and
@@ -355,6 +372,38 @@ class MainWindow(QMainWindow):
         """
         dlg = UpdateDialog(self)
         dlg.exec()
+
+    def _maybe_check_updates_at_startup(self) -> None:
+        """Background update check fired ~3 s after launch.
+
+        Silent on no-update or network failure (so the teacher app
+        doesn't pester anyone). When an update IS available, the
+        existing :class:`UpdateDialog` is opened — the teacher then
+        sees the version + release notes and decides whether to install.
+
+        Honours the "Check for updates on startup" Preferences toggle.
+        """
+        if not self._settings.get("check_updates_on_startup", True):
+            return
+        import threading
+        from shared import updater
+        from shared.version import VERSION
+
+        def _check():
+            try:
+                manifest = updater.fetch_manifest()
+                info = updater.find_update(manifest, "teacher",
+                                           current_version=VERSION)
+            except Exception:
+                # Silent failure — could be no network, GH down,
+                # placeholder URL still in version.py, etc.
+                return
+            if info is None:
+                return
+            # Hop back to the GUI thread before opening the dialog.
+            QTimer.singleShot(0, self._show_update_dialog)
+
+        threading.Thread(target=_check, daemon=True).start()
 
     def _on_quit(self) -> None:
         QApplication.instance().quit()
@@ -528,6 +577,23 @@ class MainWindow(QMainWindow):
         )
         self.lockdown_action.toggled.connect(self._toggle_lockdown)
         tb.addAction(self.lockdown_action)
+
+        # --- Silence toggle ---------------------------------------------
+        # Sticky audio mute on every connected student. The daemon runs a
+        # 1 Hz watchdog so an attempt to un-mute is immediately reversed.
+        self.silence_action = QAction(icons.sound_on(), "Silence", self)
+        self.silence_action.setCheckable(True)
+        self.silence_action.setChecked(self._audio_silenced)
+        self.silence_action.setToolTip(
+            "Mute every connected student and keep them muted — they "
+            "physically can't un-mute themselves while this is on."
+        )
+        # Reflect the persisted state in the icon at startup too.
+        if self._audio_silenced:
+            self.silence_action.setIcon(icons.sound_off())
+            self.silence_action.setText("Unsilence")
+        self.silence_action.toggled.connect(self._toggle_silence)
+        tb.addAction(self.silence_action)
         tb.addSeparator()
 
         # --- Power menu (button with dropdown) --------------------------
@@ -847,6 +913,10 @@ class MainWindow(QMainWindow):
                 self._url_block_failure_shown = True
                 self.hub.send(cid, Op.SET_BLOCKED_APPS, {"apps": apps})
                 self.hub.send(cid, Op.SET_BLOCKED_URLS, {"urls": urls})
+            # Re-apply sticky audio silence so a fresh / reconnected
+            # client honours the master switch immediately.
+            if self._audio_silenced:
+                self.hub.send(cid, Op.AUDIO, {"action": "lock"})
             self._log_activity(f"connected to {c.name if c else cid}")
         elif state == "error":
             self._log_activity(f"error on {c.name if c else cid}: {info.get('error', '')}")
@@ -1028,6 +1098,28 @@ class MainWindow(QMainWindow):
         if dlg.exec() != dialogs.MessageDialog.DialogCode.Accepted:
             return
         self._send_targets(Op.MESSAGE, dlg.payload())
+
+    def _toggle_silence(self, on: bool) -> None:
+        """Sticky audio silence. The student's daemon runs a 1 Hz
+        watchdog that re-mutes the output if anything un-mutes it,
+        so this is a true silence — not just a one-shot mute."""
+        self._audio_silenced = on
+        self._settings["audio_silenced"] = on
+        self._save_settings()
+        # Update icon + label so the toolbar tells the truth at a glance.
+        if on:
+            self.silence_action.setIcon(icons.sound_off())
+            self.silence_action.setText("Unsilence")
+        else:
+            self.silence_action.setIcon(icons.sound_on())
+            self.silence_action.setText("Silence")
+        action = "lock" if on else "unlock"
+        for cid in self._target_ids():
+            self.hub.send_logged(cid, Op.AUDIO, {"action": action})
+        self._log_activity(
+            f"audio {'silenced' if on else 'unsilenced'} "
+            f"on {len(self._target_ids())} target(s)"
+        )
 
     def _toggle_lock(self, on: bool) -> None:
         """Lock/Unlock as a single toggle action.

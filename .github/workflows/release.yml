@@ -1,0 +1,157 @@
+# ClassControl release pipeline.
+#
+# Trigger: push a tag matching v* (e.g. v0.2.1).
+# Effect:  builds the .app bundles on a macOS runner and the .exe
+#          bundles on a Windows runner, zips them with platform-tagged
+#          filenames, computes SHA-256, and uploads everything as assets
+#          on the matching GitHub Release. The in-app updater reads that
+#          Release and offers it to every running ClassControl install.
+#
+# To cut a release without touching either OS yourself:
+#
+#     # On your Mac, in the project root:
+#     # bump VERSION in shared/version.py, then:
+#     git commit -am "Release v0.3.0"
+#     git tag v0.3.0
+#     git push origin main v0.3.0
+#
+# That tag push triggers this workflow. Watch progress under the Actions
+# tab. Within ~10 minutes the new release will have both Mac + Windows
+# zips attached and your fleet can update via Help → Check for Updates.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write  # for softprops/action-gh-release to create/update releases
+
+jobs:
+  # =====================================================================
+  # macOS .app bundles via py2app
+  # =====================================================================
+  build-macos:
+    name: macOS .app bundles
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Extract version from tag
+        id: ver
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Build teacher .app
+        run: |
+          rm -rf build dist
+          python packaging/setup_master.py py2app
+          mv dist dist-teacher
+
+      - name: Build client .app
+        run: |
+          python packaging/setup_client.py py2app
+          mv dist dist-client
+
+      - name: Zip + checksum
+        run: |
+          VERSION="${{ steps.ver.outputs.VERSION }}"
+          mkdir -p release-mac
+          # ditto preserves macOS extended attributes / quarantine flags.
+          ditto -c -k --sequesterRsrc --keepParent \
+              "dist-teacher/ClassControl Teacher.app" \
+              "release-mac/ClassControl-Teacher-${VERSION}-mac.zip"
+          ditto -c -k --sequesterRsrc --keepParent \
+              "dist-client/ClassControl Client.app" \
+              "release-mac/ClassControl-Client-${VERSION}-mac.zip"
+          cd release-mac
+          shasum -a 256 *.zip > SHA256SUMS-mac.txt
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            release-mac/*.zip
+            release-mac/SHA256SUMS-mac.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          # Don't overwrite an existing release body if the other job
+          # already populated it.
+          append_body: true
+
+  # =====================================================================
+  # Windows .exe bundles via PyInstaller
+  # =====================================================================
+  build-windows:
+    name: Windows .exe bundles
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Extract version from tag
+        id: ver
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Build teacher .exe
+        run: |
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
+          if (Test-Path dist)  { Remove-Item -Recurse -Force dist  }
+          pyinstaller --noconfirm packaging/classcontrol_teacher.spec
+        shell: pwsh
+
+      - name: Build client .exe
+        run: pyinstaller --noconfirm packaging/classcontrol_client.spec
+        shell: pwsh
+
+      - name: Zip + checksum
+        shell: pwsh
+        run: |
+          $version = "${{ steps.ver.outputs.VERSION }}"
+          New-Item -ItemType Directory -Force -Path release-win | Out-Null
+          Compress-Archive -Path "dist\ClassControlTeacher\*" `
+              -DestinationPath "release-win\ClassControl-Teacher-$version-windows.zip" -Force
+          Compress-Archive -Path "dist\ClassControlClient\*" `
+              -DestinationPath "release-win\ClassControl-Client-$version-windows.zip" -Force
+          Get-ChildItem release-win -Filter *.zip | ForEach-Object {
+              $sha = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+              "$sha  $($_.Name)" | Out-File -Encoding ascii -Append "release-win\SHA256SUMS-win.txt"
+          }
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            release-win/*.zip
+            release-win/SHA256SUMS-win.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          append_body: true

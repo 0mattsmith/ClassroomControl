@@ -510,13 +510,33 @@ class ClientSession:
 
     async def _h_audio(self, data, payload):
         action = data.get("action", "")
+        reason = ""
+        ok = True
         if action == "volume":
             mac_audio.set_volume(int(data.get("value", 50)))
         elif action == "mute":
             mac_audio.set_muted(True)
         elif action == "unmute":
             mac_audio.set_muted(False)
-        await write_frame(self.writer, Op.ACK, {"for": Op.AUDIO, "action": action})
+        elif action == "lock":
+            # Sticky silence — sets mute + 0% and starts a 1 Hz watchdog
+            # that re-mutes if the student manages to unmute.
+            result = mac_audio.lock_audio()
+            ok = bool(result.get("ok", False))
+            reason = result.get("reason", "")
+        elif action == "unlock":
+            result = mac_audio.unlock_audio()
+            ok = bool(result.get("ok", False))
+            reason = result.get("reason", "")
+        else:
+            ok = False
+            reason = f"unknown audio action: {action!r}"
+        await write_frame(
+            self.writer, Op.ACK,
+            {"for": Op.AUDIO, "action": action,
+             "ok": ok, "reason": reason,
+             "locked": bool(getattr(mac_audio, "is_locked", lambda: False)())},
+        )
 
 
 # ---------------------------------------------------------------------------

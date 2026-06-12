@@ -268,6 +268,42 @@ def clear() -> QIcon:
     return _icon(d)
 
 
+def sound_on() -> QIcon:
+    """Speaker glyph with three propagation arcs — audio is enabled."""
+    def d(p: QPainter) -> None:
+        # Speaker body
+        body = [
+            QPointF(8, 13), QPointF(12, 13), QPointF(17, 8),
+            QPointF(17, 24), QPointF(12, 19), QPointF(8, 19),
+        ]
+        p.setBrush(QBrush(_stroke_color()))
+        p.drawPolygon(QPolygonF(body))
+        # Three increasing arcs
+        for r in (4, 8, 12):
+            p.drawArc(17 - r // 2, 16 - r, r * 2, r * 2,
+                      -60 * 16, 120 * 16)
+    return _icon(d)
+
+
+def sound_off() -> QIcon:
+    """Speaker glyph with a slash — audio is silenced."""
+    def d(p: QPainter) -> None:
+        body = [
+            QPointF(8, 13), QPointF(12, 13), QPointF(17, 8),
+            QPointF(17, 24), QPointF(12, 19), QPointF(8, 19),
+        ]
+        p.setBrush(QBrush(_stroke_color()))
+        p.drawPolygon(QPolygonF(body))
+        # Diagonal slash for "muted"
+        red_pen = QPen(
+            QColor("#c0392b"), STROKE_WIDTH + 1,
+            Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+        )
+        p.setPen(red_pen)
+        p.drawLine(20, 9, 28, 23)
+    return _icon(d)
+
+
 def zoom_out() -> QIcon:
     """Minus-in-magnifying-glass for the size-slider's left label."""
     def d(p: QPainter) -> None:

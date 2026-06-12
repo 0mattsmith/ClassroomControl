@@ -30,6 +30,7 @@ class PreferencesDialog(QDialog):
         "master_ip": "",
         "auto_reconnect": True,
         "show_activity_log": True,
+        "check_updates_on_startup": True,
         "last_send_path": "",
         "last_request_path": "",
     }
@@ -106,6 +107,14 @@ class PreferencesDialog(QDialog):
         self.show_activity_log.setChecked(bool(s["show_activity_log"]))
         form.addRow(self.show_activity_log)
 
+        self.check_updates_on_startup = QCheckBox(
+            "Check for updates on startup (silent unless an update is found)"
+        )
+        self.check_updates_on_startup.setChecked(
+            bool(s["check_updates_on_startup"])
+        )
+        form.addRow(self.check_updates_on_startup)
+
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -125,4 +134,5 @@ class PreferencesDialog(QDialog):
             "master_ip":            self.master_ip.text().strip(),
             "auto_reconnect":       bool(self.auto_reconnect.isChecked()),
             "show_activity_log":    bool(self.show_activity_log.isChecked()),
+            "check_updates_on_startup": bool(self.check_updates_on_startup.isChecked()),
         }

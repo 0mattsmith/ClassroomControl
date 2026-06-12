@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 # Where the updater fetches release info from.
 #
